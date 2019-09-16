@@ -23,6 +23,7 @@ size_t disp_cell_horizontal_spacing = 4;
 size_t disp_category_spacing = 6;
 
 intmax_t cells_per_column = 16;
+intmax_t max_synapses_per_cell = 64;
 intmax_t num_categories = 12;
 intmax_t cell_per_catrgory = 6;
 
@@ -84,7 +85,7 @@ int main()
 
 	//HTM Stuff
 	//CategoryEncoder encoder(num_categories, cell_per_catrgory);
-	TemporalMemory tm({(intmax_t)num_categories*cell_per_catrgory}, cells_per_column);
+	TemporalMemory tm({(intmax_t)num_categories*cell_per_catrgory}, cells_per_column, max_synapses_per_cell);
 	auto predicted_sdr = zeros({num_categories*cell_per_catrgory}, DType::Bool);
 
 	//Visualizer states
@@ -209,6 +210,9 @@ int main()
 				auto sdr = encoder::category(cat, num_categories, cell_per_catrgory);
 				std::tie(pred, active) = tm.compute(sdr, prev_predict);
 				predicted_sdr = pred.sum(1, DType::Bool);
+				if(tm_learning)
+					tm.learn(active, prev_active);
+				std::tie(prev_active, prev_predict) = std::pair(active, pred);
 			}
 		}
 
@@ -259,13 +263,16 @@ int main()
 				|| (show_active_cell_connection && active_cells[i])
 				|| (show_predictive_connection && predictive_cells[i])) {
 
-				const auto& connections = tm_connections[i];
-				const auto& permences = tm_permanences[i];
+				const auto& connections = xt::view(tm_connections, i);
+				const auto& permences = xt::view(tm_permanences, i);
 
 				sf::Vector2f center(range.left+range.width/2, range.top+range.height/2);
-				for(size_t j=0;j<tm_connections.size();j++) {
-					const auto& target = rects[tm_connections[j]].getGlobalBounds();
-					if(tm_permanences[j] < tm.connected_permanence_)
+				for(size_t j=0;j<tm.maxSynapsesPerCell();j++) {
+					int idx = connections[j];
+					if(idx == -1)
+						break;
+					const auto& target = rects[idx].getGlobalBounds();
+					if(permences[j] < tm.connected_permanence_)
 						continue;
 					sf::Vector2f draw_to(target.left+target.width/2, target.top+target.height/2);
 
