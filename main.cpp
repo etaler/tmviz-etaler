@@ -5,8 +5,16 @@
 #include <SFML/Graphics/Font.hpp>
 #include <SFML/Graphics/Text.hpp>
 
-#include <tiny_htm/tiny_htm.hpp>
-using namespace th;
+#include <xtensor/xarray.hpp>
+#include <xtensor/xview.hpp>
+
+//#include <tiny_htm/tiny_htm.hpp>
+//using namespace th;
+
+#include <Etaler/Algorithms/TemporalMemory.hpp>
+#include <Etaler/Encoders/Category.hpp>
+#include <Etaler/Interop/Xtensor.hpp>
+using namespace et;
 
 //Global config parameters
 size_t disp_cell_length = 12;
@@ -14,9 +22,9 @@ size_t disp_cell_vertical_spacing = 2;
 size_t disp_cell_horizontal_spacing = 4;
 size_t disp_category_spacing = 6;
 
-size_t cells_per_column = 16;
-size_t num_categories = 12;
-size_t cell_per_catrgory = 6;
+intmax_t cells_per_column = 16;
+intmax_t num_categories = 12;
+intmax_t cell_per_catrgory = 6;
 
 std::vector<sf::RectangleShape> makeEmptyCells(size_t y_bias = 0
 	, size_t alloc_size=num_categories*cell_per_catrgory*cells_per_column
@@ -61,6 +69,10 @@ void setTextOnOff(sf::Text& text, bool on)
 	text.setFillColor(on?sf::Color::Green: sf::Color::Blue);
 }
 
+auto make_tm_state_tensor(const TemporalMemory& tm)
+{
+	return zeros(tm.input_shape_ + tm.connections_.shape()[tm.connections_.shape().size()-2], DType::Bool);
+}
 
 int main()
 {
@@ -71,10 +83,9 @@ int main()
 	window.setVerticalSyncEnabled(true);
 
 	//HTM Stuff
-	CategoryEncoder encoder(num_categories, cell_per_catrgory);
-	TemporalMemory tm({num_categories*cell_per_catrgory}, cells_per_column);
-	tm.setPermanenceDecerment(0.15);
-	xt::xarray<bool> predicted_sdr = xt::zeros<bool>({num_categories*cell_per_catrgory});
+	//CategoryEncoder encoder(num_categories, cell_per_catrgory);
+	TemporalMemory tm({(intmax_t)num_categories*cell_per_catrgory}, cells_per_column);
+	auto predicted_sdr = zeros({num_categories*cell_per_catrgory}, DType::Bool);
 
 	//Visualizer states
 	bool show_all_connections = false;
@@ -132,6 +143,11 @@ int main()
 	usage_text.setPosition(900, 475);
 	usage_text.setFillColor(sf::Color::Black);
 
+	auto prev_active = make_tm_state_tensor(tm);
+	auto prev_predict = make_tm_state_tensor(tm);
+
+	Tensor pred = make_tm_state_tensor(tm);
+	Tensor active = make_tm_state_tensor(tm);
 	while (window.isOpen()) {
 		sf::Event event;
 		while (window.pollEvent(event)) {
@@ -141,24 +157,26 @@ int main()
 				window.setView(sf::View(sf::FloatRect(0, 0, event.size.width, event.size.height)));
 			else if (event.type == sf::Event::KeyPressed) {
 				if(event.key.code == sf::Keyboard::C) {
-					tm.cells_.decaySynapse(tm.connected_permanence_);
-					tm.organizeSynapse();
+					//tm.cells_.decaySynapse(tm.connected_permanence_);
+					//tm.organizeSynapse();
 				}
 				else if(event.key.code == sf::Keyboard::S)
 					show_all_connections = !show_all_connections;
 				else if(event.key.code == sf::Keyboard::A)
 					show_active_cell_connection = !show_active_cell_connection;
 				else if(event.key.code == sf::Keyboard::R) {
-					tm.reset();
-					predicted_sdr *= 0;
+					//tm.reset();
+					prev_active = make_tm_state_tensor(tm);
+					prev_predict = make_tm_state_tensor(tm);
+					predicted_sdr[{}] = false;
 				}
 				else if(event.key.code == sf::Keyboard::L)
 					tm_learning = !tm_learning;
 				else if(event.key.code == sf::Keyboard::P)
 					show_predictive_connection = !show_predictive_connection;
 				else if(event.key.code == sf::Keyboard::I) {
-					tm = TemporalMemory({num_categories*cell_per_catrgory}, cells_per_column);
-					predicted_sdr *= 0;
+					tm = TemporalMemory({(intmax_t)num_categories*cell_per_catrgory}, cells_per_column);
+					predicted_sdr[{}] = false;
 				}
 
 				size_t cat = 0;
@@ -188,17 +206,23 @@ int main()
 					cat = 11;
 				else
 					continue;
-				auto sdr = encoder.encode(cat);
-				predicted_sdr = tm.compute(sdr, tm_learning);
+				auto sdr = encoder::category(cat, num_categories, cell_per_catrgory);
+				std::tie(pred, active) = tm.compute(sdr, prev_predict);
+				predicted_sdr = pred.sum(1, DType::Bool);
 			}
 		}
+
+		auto active_cells = to_xarray<bool>(active);
+		auto predictive_cells = to_xarray<bool>(pred);
+		auto tm_connections = to_xarray<int>(tm.connections());
+		auto tm_permanences = to_xarray<float>(tm.permanences());
 
 		setTextOnOff(learning_text, tm_learning);
 		setTextOnOff(show_all_synapse_text, show_all_connections);
 		setTextOnOff(show_active_synapse_text, show_active_cell_connection);
 		setTextOnOff(show_predictive_synapse_text, show_predictive_connection);
 
-		auto predictions = encoder.decode(predicted_sdr);
+		auto predictions = decoder::category(predicted_sdr, num_categories);
 		std::string str = "Predicted: ";
 		if(predictions.size() == 0)
 			str += "None";
@@ -209,14 +233,15 @@ int main()
 		window.clear(sf::Color::White);
 
 		//Update output SDR view
+		auto predicted_sdr_ = to_xarray<uint8_t>(predicted_sdr);
 		for(size_t i=0;i<rect_sdrs.size();i++) {
-			if(predicted_sdr[i] == true)
+			if(predicted_sdr_[i] == true)
 				rect_sdrs[i].setFillColor(sf::Color(252, 200, 68));
 			else
 				rect_sdrs[i].setFillColor(sf::Color::White);
 		}
 
-		updateCells(rects, tm.active_cells_, tm.predictive_cells_);
+		updateCells(rects, active_cells, predictive_cells);
 
 		for(const auto& rect : rects)
 			window.draw(rect);
@@ -231,16 +256,16 @@ int main()
 			auto mouse_pos = sf::Mouse::getPosition(window);
 			if(rect.getGlobalBounds().contains(sf::Vector2f(mouse_pos))
 				|| show_all_connections
-				|| (show_active_cell_connection && tm.active_cells_[i])
-				|| (show_predictive_connection && tm.predictive_cells_[i])) {
+				|| (show_active_cell_connection && active_cells[i])
+				|| (show_predictive_connection && predictive_cells[i])) {
 
-				const auto& connections = tm.cells_.connections_[i];
-				const auto& permences = tm.cells_.permence_[i];
+				const auto& connections = tm_connections[i];
+				const auto& permences = tm_permanences[i];
 
 				sf::Vector2f center(range.left+range.width/2, range.top+range.height/2);
-				for(size_t j=0;j<connections.size();j++) {
-					const auto& target = rects[connections[j]].getGlobalBounds();
-					if(permences[j] < tm.connected_permanence_)
+				for(size_t j=0;j<tm_connections.size();j++) {
+					const auto& target = rects[tm_connections[j]].getGlobalBounds();
+					if(tm_permanences[j] < tm.connected_permanence_)
 						continue;
 					sf::Vector2f draw_to(target.left+target.width/2, target.top+target.height/2);
 
