@@ -1,8 +1,8 @@
 # tmviz
-A simple HTM TemporalMemory visualizer in C++ 
+A simple HTM TemporalMemory visualizer in C++. Ported(hacked) to work with Etaler
 
 ## Dependencies
-xtensor, SFML
+xtensor, SFML, Etaler
 
 ### Linux
 You can deal with it no problem fellow Linux user!
@@ -12,9 +12,11 @@ You can deal with it no problem fellow Linux user!
 homebrew install xtensor sfml
 ```
 
+And install Eraler
+
 ## Build
 ```
-git clone --recursive https://github.com/marty1885/tmviz
+git clone --recursive https://github.com/Etaler/tmviz-etaler
 cd tmviz
 mkdir build 
 cd build
